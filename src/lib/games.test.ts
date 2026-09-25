@@ -3,9 +3,12 @@ import { createTestDatabase } from '../../db/test-helpers';
 import { categories, publishers, games } from '../../db/schema';
 import type { Database } from './db';
 import {
+    getAllCategories,
     getAllGames,
     getAllGameIds,
     getGameById,
+    getAllPublishers,
+    getFilteredGames,
 } from './games';
 
 async function seedGames(db: Database, count: number): Promise<void> {
@@ -50,6 +53,42 @@ describe('games data-access helpers', () => {
         const ids = await getAllGameIds(db);
         const all = await getAllGames(db);
         expect(ids).toEqual(all.map((g) => g.id));
+    });
+
+    it('returns filter options ordered alphabetically', async () => {
+        await seedGames(db, 1);
+        const categoriesList = await getAllCategories(db);
+        const publishersList = await getAllPublishers(db);
+        expect(categoriesList).toEqual([{ id: expect.any(Number), name: 'Strategy' }]);
+        expect(publishersList).toEqual([{ id: expect.any(Number), name: 'Pub One' }]);
+    });
+
+    it('filters by any selected category and an optional publisher', async () => {
+        const insertedCategories = await db.insert(categories).values([
+            { name: 'Strategy', description: 'strategy' },
+            { name: 'Puzzle', description: 'puzzle' },
+        ]).returning({ id: categories.id, name: categories.name });
+        const strategy = insertedCategories.find((category) => category.name === 'Strategy');
+        const puzzle = insertedCategories.find((category) => category.name === 'Puzzle');
+        const insertedPublishers = await db.insert(publishers).values([
+            { name: 'Pub One', description: 'one' },
+            { name: 'Pub Two', description: 'two' },
+        ]).returning({ id: publishers.id });
+        const [pubOne, pubTwo] = insertedPublishers;
+        if (!strategy || !puzzle || !pubOne || !pubTwo) {
+            throw new Error('Expected filter fixtures to be inserted');
+        }
+        await db.insert(games).values([
+            { title: 'Strategy One', description: 'one', starRating: 4, categoryId: strategy.id, publisherId: pubOne.id },
+            { title: 'Puzzle One', description: 'two', starRating: 4, categoryId: puzzle.id, publisherId: pubOne.id },
+            { title: 'Puzzle Two', description: 'three', starRating: 4, categoryId: puzzle.id, publisherId: pubTwo.id },
+        ]);
+
+        const filtered = await getFilteredGames(db, {
+            categoryIds: [strategy.id, puzzle.id],
+            publisherId: pubOne.id,
+        });
+        expect(filtered.map((game) => game.title)).toEqual(['Puzzle One', 'Strategy One']);
     });
 
     it('fetches a single game by id', async () => {
